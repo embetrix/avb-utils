@@ -1,6 +1,33 @@
 cmake_minimum_required(VERSION 3.10)
 project(avb_verify C)
 
+# libavb from the submodule, for the verifier when no system libavb exists and
+# for fec always. Absolute paths because fec/ uses the list from its own
+# directory.
+set(LIBAVB_DIR ${CMAKE_SOURCE_DIR}/avb/libavb)
+set(LIBAVB_SOURCES
+    ${LIBAVB_DIR}/avb_chain_partition_descriptor.c
+    ${LIBAVB_DIR}/avb_cmdline.c
+    ${LIBAVB_DIR}/avb_crc32.c
+    ${LIBAVB_DIR}/avb_crypto.c
+    ${LIBAVB_DIR}/avb_descriptor.c
+    ${LIBAVB_DIR}/avb_footer.c
+    ${LIBAVB_DIR}/avb_hash_descriptor.c
+    ${LIBAVB_DIR}/avb_hashtree_descriptor.c
+    ${LIBAVB_DIR}/avb_kernel_cmdline_descriptor.c
+    ${LIBAVB_DIR}/avb_mldsa.c
+    ${LIBAVB_DIR}/avb_property_descriptor.c
+    ${LIBAVB_DIR}/avb_rsa.c
+    ${LIBAVB_DIR}/avb_slot_verify.c
+    ${LIBAVB_DIR}/avb_sysdeps_posix.c
+    ${LIBAVB_DIR}/avb_util.c
+    ${LIBAVB_DIR}/avb_vbmeta_image.c
+    ${LIBAVB_DIR}/avb_version.c
+    ${LIBAVB_DIR}/crypto/sha256_impl.c
+    ${LIBAVB_DIR}/crypto/sha512_impl.c
+    ${LIBAVB_DIR}/crypto/mldsa_impl.c
+)
+
 # Try system-installed libavb first, fall back to submodule
 find_package(PkgConfig QUIET)
 if(PKG_CONFIG_FOUND)
@@ -29,29 +56,7 @@ if(LIBAVB_FOUND)
     target_link_libraries(avb_verify PRIVATE ${LIBAVB_LINK_LIBRARIES})
 else()
     message(STATUS "System libavb not found, using avb submodule")
-    set(LIBAVB_DIR avb/libavb)
-    target_sources(avb_verify PRIVATE
-        ${LIBAVB_DIR}/avb_chain_partition_descriptor.c
-        ${LIBAVB_DIR}/avb_cmdline.c
-        ${LIBAVB_DIR}/avb_crc32.c
-        ${LIBAVB_DIR}/avb_crypto.c
-        ${LIBAVB_DIR}/avb_descriptor.c
-        ${LIBAVB_DIR}/avb_footer.c
-        ${LIBAVB_DIR}/avb_hash_descriptor.c
-        ${LIBAVB_DIR}/avb_hashtree_descriptor.c
-        ${LIBAVB_DIR}/avb_kernel_cmdline_descriptor.c
-        ${LIBAVB_DIR}/avb_mldsa.c
-        ${LIBAVB_DIR}/avb_property_descriptor.c
-        ${LIBAVB_DIR}/avb_rsa.c
-        ${LIBAVB_DIR}/avb_slot_verify.c
-        ${LIBAVB_DIR}/avb_sysdeps_posix.c
-        ${LIBAVB_DIR}/avb_util.c
-        ${LIBAVB_DIR}/avb_vbmeta_image.c
-        ${LIBAVB_DIR}/avb_version.c
-        ${LIBAVB_DIR}/crypto/sha256_impl.c
-        ${LIBAVB_DIR}/crypto/sha512_impl.c
-        ${LIBAVB_DIR}/crypto/mldsa_impl.c
-    )
+    target_sources(avb_verify PRIVATE ${LIBAVB_SOURCES})
     target_compile_definitions(avb_verify PRIVATE AVB_COMPILATION)
     target_include_directories(avb_verify PRIVATE ${CMAKE_SOURCE_DIR}/avb ${LIBAVB_DIR}/crypto)
 endif()
@@ -66,6 +71,14 @@ if(INSTALL_AVB_SIGN)
     endif()
 endif()
 
+# avbtool shells out to fec for the dm-verity parity avb_sign always writes, so
+# a host that signs needs it; a target that only verifies does not. Needs the
+# fec/ submodules, a C++20 compiler, OpenSSL and zlib.
+option(BUILD_FEC "Build the AOSP fec tool avbtool needs" ${INSTALL_AVB_SIGN})
+if(BUILD_FEC)
+    add_subdirectory(fec)
+endif()
+
 include(CTest)
 if(BUILD_TESTING)
     add_test(NAME integration COMMAND ${CMAKE_SOURCE_DIR}/avb_verify_test.sh
@@ -77,6 +90,14 @@ if(BUILD_TESTING)
              WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     set_tests_properties(avb_sign PROPERTIES
         ENVIRONMENT "avb_verify=$<TARGET_FILE:avb_verify>")
+
+    if(BUILD_FEC)
+        # The signing test needs fec on PATH; use the one just built.
+        set_property(TEST avb_sign APPEND PROPERTY
+            ENVIRONMENT "PATH=$<TARGET_FILE_DIR:fec>:$ENV{PATH}")
+        add_test(NAME fec_roundtrip
+                 COMMAND sh ${CMAKE_SOURCE_DIR}/tests/fec_roundtrip.sh $<TARGET_FILE:fec>)
+    endif()
 
     # Small internal tests share the verifier's exact libavb configuration.
     get_target_property(VERIFY_SOURCES avb_verify SOURCES)

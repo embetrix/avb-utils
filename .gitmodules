@@ -1,3 +1,27 @@
 [submodule "avb"]
 	path = avb
 	url = https://android.googlesource.com/platform/external/avb
+[submodule "fec/extras"]
+	path = fec/extras
+	url = https://android.googlesource.com/platform/system/extras
+	shallow = true
+[submodule "fec/fec_rs"]
+	path = fec/fec_rs
+	url = https://android.googlesource.com/platform/external/fec
+	shallow = true
+[submodule "fec/libbase"]
+	path = fec/libbase
+	url = https://android.googlesource.com/platform/system/libbase
+	shallow = true
+[submodule "fec/core"]
+	path = fec/core
+	url = https://android.googlesource.com/platform/system/core
+	shallow = true
+[submodule "fec/logging"]
+	path = fec/logging
+	url = https://android.googlesource.com/platform/system/logging
+	shallow = true
+[submodule "fec/squashfs"]
+	path = fec/squashfs
+	url = https://android.googlesource.com/platform/external/squashfs-tools
+	shallow = true

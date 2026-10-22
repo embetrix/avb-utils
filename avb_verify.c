@@ -398,6 +398,20 @@ static void print_verity_table(const char *prefix, const char *device_path,
 				bool has_roothash_sig,
 				const char *sig_key_desc)
 {
+	bool has_fec = ht->ht.fec_num_roots > 0 && ht->ht.fec_size > 0;
+	uint64_t fec_start = 0;
+	unsigned int opt_args = 0;
+
+	/* fec_blocks is the extent FEC covers rather than the size of the parity,
+	 * and the parity begins immediately after what it covers, so the two are
+	 * the same value. See avbtool.py make_verity_table(). */
+	if (has_fec) {
+		fec_start = ht->ht.fec_offset / ht->ht.data_block_size;
+		opt_args += 8;
+	}
+	if (has_roothash_sig)
+		opt_args += 2;
+
 	printf("%s0 %" PRIu64 " verity %u %s %s %u %u %" PRIu64 " %" PRIu64 " %s ",
 	       prefix, sectors, ht->ht.dm_verity_version,
 	       device_path, device_path,
@@ -410,8 +424,14 @@ static void print_verity_table(const char *prefix, const char *device_path,
 		print_hex(ht->salt, ht->ht.salt_len);
 	else
 		printf("-");
+	if (opt_args)
+		printf(" %u", opt_args);
+	if (has_fec)
+		printf(" use_fec_from_device %s fec_roots %u fec_blocks %" PRIu64
+		       " fec_start %" PRIu64,
+		       device_path, ht->ht.fec_num_roots, fec_start, fec_start);
 	if (has_roothash_sig)
-		printf(" 2 root_hash_sig_key_desc %s", sig_key_desc);
+		printf(" root_hash_sig_key_desc %s", sig_key_desc);
 	printf("\n");
 }
 
@@ -617,6 +637,11 @@ int main(int argc, char *argv[])
 	printf("Data block sz: %u\n", ht.ht.data_block_size);
 	printf("Hash block sz: %u\n", ht.ht.hash_block_size);
 	printf("Hash offset:   %" PRIu64 "\n", ht.ht.tree_offset);
+	if (ht.ht.fec_num_roots > 0 && ht.ht.fec_size > 0)
+		printf("FEC:           roots %u, offset %" PRIu64 ", size %" PRIu64 "\n",
+		       ht.ht.fec_num_roots, ht.ht.fec_offset, ht.ht.fec_size);
+	else
+		printf("FEC:           none\n");
 	printf("Root digest:   ");
 	print_hex(ht.root_digest, ht.ht.root_digest_len);
 	printf("\n");

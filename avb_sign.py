@@ -81,7 +81,29 @@ def main():
                         help="AVB signing algorithm (default: SHA256_RSA4096)")
     parser.add_argument("--avbtool", default=None,
                         help="Path to avbtool or avbtool.py (auto-detected if omitted)")
+    parser.add_argument("--fec-roots", type=int,
+                        default=int(os.environ.get("AVB_FEC_ROOTS") or 2),
+                        help="Reed-Solomon roots for dm-verity FEC, 2-24. Higher values "
+                             "repair more corrupt blocks at proportionally more space "
+                             "(default: 2, or $AVB_FEC_ROOTS)")
+    parser.add_argument("--no-fec", action="store_true",
+                        help="Write no forward error correction data. The image then "
+                             "needs no fec tool to sign, and dm-verity fails a corrupt "
+                             "block instead of repairing it")
     args = parser.parse_args()
+
+    # dm-verity accepts 2..24 -- DM_VERITY_FEC_RSM minus MAX_RSN and MIN_RSN in
+    # drivers/md/dm-verity-fec.h. Neither avbtool nor the fec tool range-checks
+    # this, so without the guard an out-of-range value produces an image that
+    # builds cleanly and fails at dmsetup on the device.
+    if not args.no_fec and not 2 <= args.fec_roots <= 24:
+        print(f"Error: --fec-roots must be between 2 and 24, got {args.fec_roots}",
+              file=sys.stderr)
+        sys.exit(1)
+
+    # avbtool only shells out to fec when it generates FEC, so this is the
+    # whole difference between the two modes at the avbtool level.
+    fec_args = ["--do_not_generate_fec"] if args.no_fec else ["--fec_num_roots", str(args.fec_roots)]
 
     if not os.path.isfile(args.image):
         print(f"Error: image not found: {args.image}", file=sys.stderr)
@@ -108,6 +130,7 @@ def main():
         print(f"Cert:      {args.cert}")
     print(f"Partition: {args.partition_name}")
     print(f"Algorithm: {args.algorithm}")
+    print(f"FEC:       {'none' if args.no_fec else f'{args.fec_roots} roots'}")
     print()
 
     # Pad image to a 4KB boundary so avbtool accepts it
@@ -129,14 +152,17 @@ def main():
             "--algorithm",      args.algorithm,
             "--key",            args.key,
             "--hash_algorithm", "sha256",
-            "--do_not_generate_fec",
-        ])
+        ] + fec_args)
     else:
         with tempfile.TemporaryDirectory() as tmpdir:
             roothash_file = os.path.join(tmpdir, "roothash.hex")
             p7s_file      = os.path.join(tmpdir, "roothash.p7s")
 
-            # Step 1: first-pass signing with avbtool picks a random salt
+            # Step 1: first-pass signing with avbtool picks a random salt.
+            # Step 4 erases this footer and rebuilds it, and the root digest
+            # covers the image data and salt rather than the parity, so there
+            # is nothing to gain from generating FEC that is about to be thrown
+            # away.
             print("[1/4] Adding hashtree footer (first pass)...")
             run(avb + [
                 "add_hashtree_footer",
@@ -192,9 +218,8 @@ def main():
                 "--key",            args.key,
                 "--hash_algorithm", "sha256",
                 "--salt",           salt,
-                "--do_not_generate_fec",
                 "--prop_from_file", f"roothash_sig:{p7s_file}",
-            ])
+            ] + fec_args)
 
     print()
     print("Done.")
