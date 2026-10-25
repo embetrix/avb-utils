@@ -15,14 +15,17 @@ jobs:
           submodules: recursive
 
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake clang clang-tools valgrind checksec e2fsprogs erofs-utils squashfs-tools python3 openssl
+        run: sudo apt-get update && sudo apt-get install -y cmake clang clang-tools valgrind checksec e2fsprogs erofs-utils squashfs-tools python3 openssl libssl-dev zlib1g-dev
 
+      # With the fec tool, so the default (FEC) signing path is exercised.
       - name: Build
-        run: cmake -B build -DCMAKE_C_COMPILER=clang && cmake --build build
+        run: cmake -B build -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DBUILD_FEC=ON && cmake --build build
 
       - name: Check binary hardening
         run: checksec --file=build/avb_verify
 
+      # Target configuration: no fec, no C++. The analyzer covers only our own
+      # C; the tests on this tree take the --no-fec signing path.
       - name: Static analysis
         run: |
           cmake -B build-analyze -DCMAKE_C_COMPILER=clang
@@ -30,6 +33,9 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build -V
+
+      - name: Test without the fec tool
+        run: ctest --test-dir build-analyze -V -R '^(integration|avb_sign|verify_unit)$'
 
       - name: Valgrind memcheck
         run: |

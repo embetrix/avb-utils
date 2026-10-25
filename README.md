@@ -28,15 +28,28 @@ It implements two layers of verification:
 - GCC or Clang
 - [libavb](https://android.googlesource.com/platform/external/avb/) (submodule)
 - Python 3 + OpenSSL  for signing images with `avbtool` (development only)
+- [`fec`](https://android.googlesource.com/platform/system/extras/+/refs/heads/main/verity/fec/)
+  from AOSP `system/extras`  `avbtool` shells out to it to write the
+  dm-verity forward error correction data (development only). Built here
+  from the submodules under `fec/` with `-DBUILD_FEC=ON` (implied by
+  `-DINSTALL_AVB_SIGN=ON`); that needs a C++20 compiler, OpenSSL and zlib
+  development files. Not needed to sign with `--no-fec`.
 
 > **Note:** `avb_verify` is lightweight: no external crypto library is required on the target and all cryptographic operations are handled by libavb's own built-in implementation. On the host side, `avb_sign.py` (via `avbtool`) handles dm-verity hash tree generation and vbmeta signing directly, so cryptsetup or any verity userspace tooling is not required.
 
 ## Build
 
 ```bash
+git submodule update --init
 cmake -B build
 cmake --build build
 ```
+
+For a host that signs images, add `-DINSTALL_AVB_SIGN=ON`: it installs
+`avb_sign`, `avbtool` and the `fec` tool they need. The AOSP repositories fec
+is assembled from are shallow submodules under `fec/`, so the init above
+fetches only the pinned commit of each; a target-only build can skip them
+with `git submodule update --init avb`.
 
 ## Signing (host)
 
@@ -88,7 +101,36 @@ python3 avb_sign.py \
   --algorithm SHA256_RSA4096
 ```
 
-### 3. Extract the public key for the target
+### 3. Forward error correction
+
+By default `avb_sign.py` writes a Reed-Solomon parity area after the hash tree,
+and `avb_verify` emits the matching `use_fec_from_device` arguments in the
+dm-verity table, so the kernel repairs a bounded number of corrupt blocks
+instead of failing the read. `--fec-roots` sets the number of roots, 2 to 24
+(the range dm-verity accepts); it defaults to `$AVB_FEC_ROOTS`, or 2. Each
+255-byte codeword corrects up to `roots / 2` bad bytes, at a space cost of
+`roots / (255 - roots)` of the covered data, so 2 roots repairs one corrupt
+4 KiB block per interleave group for 0.8 %, and 24 repairs twelve for 10.4 %.
+
+These are AOSP's defaults: `avbtool add_hashtree_footer` generates FEC unless
+told `--do_not_generate_fec`, with `--fec_num_roots` defaulting to 2, and
+`--no-fec` here maps onto that switch. An image signed with the defaults is
+therefore laid out the same way one signed by a stock `avbtool` would be.
+
+```bash
+python3 avb_sign.py --image rootfs.ext4 --key key.pem --fec-roots 24
+```
+
+`--no-fec` writes no parity. The image then needs no `fec` tool to sign -- a
+host built with `-DBUILD_FEC=OFF` can still sign -- and dm-verity fails a
+corrupt block instead of repairing it. `avb_verify` reads either kind: the
+`use_fec_from_device` group is only emitted for an image that carries FEC.
+
+```bash
+python3 avb_sign.py --image rootfs.ext4 --key key.pem --no-fec
+```
+
+### 4. Extract the public key for the target
 
 `avb_verify` requires the public key in AVB's serialized format (not PEM):
 
@@ -132,6 +174,7 @@ Data blocks:   77046
 Data block sz: 4096
 Hash block sz: 4096
 Hash offset:   315580416
+FEC:           roots 2, offset 318070784, size 2514944
 Root digest:   4aec6b1c1675f1a1bc2dd8394185e2fba4a230e8f754028e868b46e2f6cfc7a2
 Salt:          72807c3fa652f8e7f176b22b55cf8c711e720ab067d9f26f8dc72a831e291be6
 Roothash sig:  avb_roothash_sig.root
@@ -139,11 +182,14 @@ Roothash sig:  avb_roothash_sig.root
 dm table:
   0 616368 verity 1 /dev/mmcblk0p2 /dev/mmcblk0p2 4096 4096 77046 77046 sha256 \
       4aec6b1c1675f1a1bc2dd8394185e2fba4a230e8f754028e868b46e2f6cfc7a2 72807c3fa652f8e7f176b22b55cf8c711e720ab067d9f26f8dc72a831e291be6 \
-      2 root_hash_sig_key_desc avb_roothash_sig.root
+      10 use_fec_from_device /dev/mmcblk0p2 fec_roots 2 fec_blocks 77654 fec_start 77654 \
+      root_hash_sig_key_desc avb_roothash_sig.root
 ```
 
 `Roothash sig` and `root_hash_sig_key_desc` only appear when a `roothash_sig`
 property is present in the vbmeta image (see [Root hash signature](#root-hash-signature)).
+The `use_fec_from_device` group only appears when the hashtree descriptor
+carries FEC, and the optional-argument count before it is the total of both.
 
 ### dm-table mode
 
@@ -200,7 +246,8 @@ The full on-disk hashtree layout: leaf hashes covering data blocks, intermediate
 3. `Check public key`  compares the key embedded in vbmeta against the
    trusted `pubkey.bin`.
 4. `Extract dm-verity parameters`  parses the hashtree descriptor and
-   builds the dm-verity table string.
+   builds the dm-verity table string, including the `use_fec_from_device`
+   arguments when the descriptor carries forward error correction data.
 5. `Load root hash signature` *(if present)*  reads the `roothash_sig`
    vbmeta property, loads the PKCS#7 blob into the session keyring via
    `add_key(2)`, and appends `root_hash_sig_key_desc` to the dm-verity table.
@@ -210,6 +257,7 @@ The full on-disk hashtree layout: leaf hashes covering data blocks, intermediate
 ```
 CONFIG_BLK_DEV_DM=y
 CONFIG_DM_VERITY=y
+CONFIG_DM_VERITY_FEC=y
 CONFIG_DM_VERITY_VERIFY_ROOTHASH_SIG=y
 CONFIG_KEYS=y
 CONFIG_ASYMMETRIC_KEY_TYPE=y
@@ -300,3 +348,9 @@ from the Android Open Source Project used as a git submodule under `avb`.
 libavb is licensed under a permissive MIT-style license, the Apache License 2.0,
 and the BSD 3-Clause License depending on the source file:
 see the [upstream LICENSE](https://android.googlesource.com/platform/external/avb/+/refs/heads/master/LICENSE) for the full terms.
+
+The `fec` host tool is assembled from further AOSP repositories used as git
+submodules under `fec/`: `system/extras`, `system/libbase`, `system/core`,
+`system/logging` and `external/squashfs-tools`, all Apache License 2.0, and
+`external/fec` (Phil Karn's Reed-Solomon library), LGPL 2.1 or later. It is
+not installed on a target.
