@@ -105,10 +105,11 @@ class LargeImages(unittest.TestCase):
     def tearDownClass(cls):
         cls.tmp.cleanup()
 
-    def fixture(self, end=4*MIB, kind='erofs', container=None, sb=None, blob=None):
+    def fixture(self, end=4*MIB, kind='erofs', container=None, sb=None, blob=None,
+                fec_size=0):
         # Metadata and footer really reside at these large offsets; holes stay sparse.
-        size = (end - 128*1024) // BLOCK * BLOCK
-        self.vbmeta_offset = size + BLOCK
+        size = (end - 128*1024 - fec_size) // BLOCK * BLOCK
+        self.vbmeta_offset = size + BLOCK + fec_size
         blob = metadata(size) if blob is None else blob
         footer = avbtool.AvbFooter()
         footer.original_image_size = size
@@ -278,6 +279,43 @@ class LargeImages(unittest.TestCase):
                         {'tree_offset': 8*MIB}, {'dm_verity_version': 99}):
             with self.subTest(changes=changes):
                 self.fixture(blob=sign([descriptor(size, **changes)]))
+                self.verify(False, error='invalid dm-verity parameters')
+
+    def test_signed_fec_table_values(self):
+        # Synthetic signed layouts exercise metadata validation; fec_roundtrip
+        # and avb_sign separately test real parity generation and repair.
+        for roots in (2, 24):
+            fec_size = 4 * roots * BLOCK
+            size = 4*MIB - 128*1024 - fec_size
+            fec_offset = size + BLOCK
+            desc = descriptor(size, fec_num_roots=roots,
+                              fec_offset=fec_offset, fec_size=fec_size)
+            self.fixture(blob=sign([desc]), fec_size=fec_size)
+            fields = self.verify().split()
+            self.assertEqual(fields[13:], [
+                '8', 'use_fec_from_device', str(self.path), 'fec_roots', str(roots),
+                'fec_blocks', str(fec_offset // BLOCK),
+                'fec_start', str(fec_offset // BLOCK)])
+
+    def test_signed_invalid_fec_values(self):
+        fec_size = 8 * BLOCK
+        size = 4*MIB - 128*1024 - fec_size
+        fec_offset = size + BLOCK
+        for changes in (
+                {'fec_num_roots': 0}, {'fec_num_roots': 1},
+                {'fec_num_roots': 25}, {'fec_num_roots': (1 << 32)-1},
+                {'fec_offset': 0}, {'fec_offset': fec_offset + 1},
+                {'fec_offset': size}, {'fec_offset': fec_offset + BLOCK},
+                {'fec_offset': 1 << 40}, {'fec_offset': (1 << 64)-1},
+                {'fec_size': 0}, {'fec_size': fec_size - 1},
+                {'fec_size': fec_size - BLOCK}, {'fec_size': fec_size + BLOCK},
+                {'fec_size': (1 << 64)-BLOCK}, {'hash_block_size': BLOCK // 2},
+                {'fec_num_roots': 0, 'fec_size': 0},
+                {'fec_num_roots': 0, 'fec_offset': 0}):
+            with self.subTest(changes=changes):
+                values = dict(fec_num_roots=2, fec_offset=fec_offset, fec_size=fec_size)
+                values.update(changes)
+                self.fixture(blob=sign([descriptor(size, **values)]), fec_size=fec_size)
                 self.verify(False, error='invalid dm-verity parameters')
 
     def test_short_signed_descriptor(self):

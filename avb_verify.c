@@ -338,6 +338,28 @@ static bool valid_hashtree(const HashtreeInfo *info, uint64_t vbmeta_offset)
 	    ht->partition_name_len > AVB_PART_NAME_MAX_LEN ||
 	    !memchr(alg, '\0', sizeof(ht->hash_algorithm)))
 		return false;
+	if (ht->fec_num_roots == 0) {
+		if (ht->fec_offset != 0 || ht->fec_size != 0)
+			return false;
+	} else {
+		/* The table uses fec_offset for both the covered extent and the
+		 * parity start. Require parity just after the tree and whole blocks. */
+		if (ht->fec_num_roots < 2 || ht->fec_num_roots > 24 ||
+		    ht->data_block_size != ht->hash_block_size ||
+		    ht->fec_offset % ht->data_block_size != 0 ||
+		    ht->fec_size == 0 || ht->fec_size % ht->data_block_size != 0 ||
+		    ht->fec_offset != ht->tree_offset + ht->tree_size ||
+		    ht->fec_offset > vbmeta_offset ||
+		    ht->fec_size > vbmeta_offset - ht->fec_offset)
+			return false;
+		/* One parity block per root per Reed-Solomon round. Computing
+		 * the ceiling with quotient/remainder avoids overflowing the extent. */
+		uint64_t blocks = ht->fec_offset / ht->data_block_size;
+		uint32_t rsn = 255 - ht->fec_num_roots;
+		uint64_t rounds = blocks / rsn + (blocks % rsn != 0);
+		if (ht->fec_size / ht->data_block_size != rounds * ht->fec_num_roots)
+			return false;
+	}
 	if (!((strcmp(alg, "sha1") == 0 && ht->root_digest_len == 20) ||
 	      (strcmp(alg, "sha256") == 0 && ht->root_digest_len == 32) ||
 	      (strcmp(alg, "blake2b-256") == 0 && ht->root_digest_len == 32) ||
