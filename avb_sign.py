@@ -82,7 +82,6 @@ def main():
     parser.add_argument("--avbtool", default=None,
                         help="Path to avbtool or avbtool.py (auto-detected if omitted)")
     parser.add_argument("--fec-roots", type=int,
-                        default=int(os.environ.get("AVB_FEC_ROOTS") or 2),
                         help="Reed-Solomon roots for dm-verity FEC, 2-24. Higher values "
                              "repair more corrupt blocks at proportionally more space "
                              "(default: 2, or $AVB_FEC_ROOTS)")
@@ -92,14 +91,20 @@ def main():
                              "block instead of repairing it")
     args = parser.parse_args()
 
+    # Resolve the environment only when FEC is enabled and the command line
+    # did not supply a value. --help and --no-fec must not depend on it.
+    if not args.no_fec and args.fec_roots is None:
+        try:
+            args.fec_roots = int(os.environ.get("AVB_FEC_ROOTS") or 2)
+        except ValueError:
+            parser.error("AVB_FEC_ROOTS must be an integer between 2 and 24")
+
     # dm-verity accepts 2..24 -- DM_VERITY_FEC_RSM minus MAX_RSN and MIN_RSN in
     # drivers/md/dm-verity-fec.h. Neither avbtool nor the fec tool range-checks
     # this, so without the guard an out-of-range value produces an image that
     # builds cleanly and fails at dmsetup on the device.
     if not args.no_fec and not 2 <= args.fec_roots <= 24:
-        print(f"Error: --fec-roots must be between 2 and 24, got {args.fec_roots}",
-              file=sys.stderr)
-        sys.exit(1)
+        parser.error(f"--fec-roots must be between 2 and 24, got {args.fec_roots}")
 
     # avbtool only shells out to fec when it generates FEC, so this is the
     # whole difference between the two modes at the avbtool level.

@@ -283,6 +283,61 @@ else
     nok "--fec-roots ignored under --no-fec"
 fi
 
+# 20. An invalid environment default must not break help or --no-fec.
+if env AVB_FEC_ROOTS=invalid $SIGN_BASE --help >/dev/null 2>&1; then
+    ok "--help ignores invalid AVB_FEC_ROOTS"
+else
+    nok "--help ignores invalid AVB_FEC_ROOTS"
+fi
+if env AVB_FEC_ROOTS=invalid PATH="$NOFEC_BIN" $SIGN_BASE \
+         --image "$TEST_DIR/rootfs.ext4" --output "$TEST_DIR/env-nofec.ext4" \
+         --key "$TEST_DIR/key.pem" --no-fec >/dev/null 2>&1 \
+   && "$VERIFY" -t -d "$TEST_DIR/env-nofec.ext4" -k "$TEST_DIR/pubkey.bin" \
+         >/dev/null 2>&1; then
+    ok "--no-fec ignores invalid AVB_FEC_ROOTS"
+else
+    nok "--no-fec ignores invalid AVB_FEC_ROOTS"
+fi
+
+# 21. Invalid defaults fail cleanly before changing the input.
+for roots in invalid 1 25; do
+    cp "$TEST_DIR/rootfs.ext4" "$TEST_DIR/env-invalid.ext4"
+    if env AVB_FEC_ROOTS="$roots" $SIGN_BASE --image "$TEST_DIR/env-invalid.ext4" \
+            --key "$TEST_DIR/key.pem" >"$TEST_DIR/env-error.log" 2>&1; then
+        nok "AVB_FEC_ROOTS=$roots refused"
+    elif grep -q 'error:.*between 2 and 24' "$TEST_DIR/env-error.log" \
+         && ! grep -q Traceback "$TEST_DIR/env-error.log" \
+         && cmp -s "$TEST_DIR/rootfs.ext4" "$TEST_DIR/env-invalid.ext4"; then
+        ok "AVB_FEC_ROOTS=$roots refused without modifying input"
+    else
+        nok "AVB_FEC_ROOTS=$roots error handling"
+    fi
+done
+
+# 22. Explicit roots override an invalid default; valid defaults are honored.
+if [[ $HAVE_FEC -eq 0 ]]; then
+    skip "FEC environment precedence (no fec tool)"
+else
+    if env AVB_FEC_ROOTS=invalid $SIGN_BASE --image "$TEST_DIR/rootfs.ext4" \
+            --output "$TEST_DIR/env-override.ext4" --key "$TEST_DIR/key.pem" \
+            --fec-roots 2 >/dev/null 2>&1 \
+       && "$VERIFY" -t -d "$TEST_DIR/env-override.ext4" -k "$TEST_DIR/pubkey.bin" \
+            2>/dev/null | grep -q 'fec_roots 2 '; then
+        ok "--fec-roots overrides invalid AVB_FEC_ROOTS"
+    else
+        nok "--fec-roots overrides invalid AVB_FEC_ROOTS"
+    fi
+    if env AVB_FEC_ROOTS=24 $SIGN_BASE --image "$TEST_DIR/rootfs.ext4" \
+            --output "$TEST_DIR/env-roots.ext4" --key "$TEST_DIR/key.pem" \
+            >/dev/null 2>&1 \
+       && "$VERIFY" -t -d "$TEST_DIR/env-roots.ext4" -k "$TEST_DIR/pubkey.bin" \
+            2>/dev/null | grep -q 'fec_roots 24 '; then
+        ok "valid AVB_FEC_ROOTS supplies roots"
+    else
+        nok "valid AVB_FEC_ROOTS supplies roots"
+    fi
+fi
+
 echo ""
 echo "=== Results: $pass passed, $fail failed, $skip skipped ==="
 exit "$fail"
