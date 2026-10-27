@@ -15,10 +15,18 @@ find_package(OpenSSL REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(Threads REQUIRED)
 
-foreach(sub extras fec_rs libbase core logging squashfs)
-    if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${sub}/.git)
+# Source exports and packaged builds need not retain Git metadata.
+foreach(source
+        extras/verity/fec/main.cpp
+        fec_rs/encode_rs_char.c
+        libbase/file.cpp
+        core/libsparse/sparse.cpp
+        logging/liblog/include/android/log.h
+        squashfs/squashfs-tools/squashfs_fs.h)
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${source}")
+        string(REGEX REPLACE "/.*" "" sub "${source}")
         message(FATAL_ERROR
-            "fec/${sub} is empty: run `git submodule update --init fec/${sub}`, "
+            "fec/${source} is missing: run `git submodule update --init fec/${sub}`, "
             "or configure with -DBUILD_FEC=OFF")
     endif()
 endforeach()
