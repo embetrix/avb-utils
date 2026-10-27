@@ -350,7 +350,13 @@ and the BSD 3-Clause License depending on the source file:
 see the [upstream LICENSE](https://android.googlesource.com/platform/external/avb/+/refs/heads/master/LICENSE) for the full terms.
 
 The `fec` host tool is assembled from further AOSP repositories used as git
-submodules under `fec/`: `system/extras`, `system/libbase`, `system/core`,
-`system/logging` and `external/squashfs-tools`, all Apache License 2.0, and
-`external/fec` (Phil Karn's Reed-Solomon library), LGPL 2.1 or later. It is
+submodules under `fec/`:
+[`system/extras`](https://android.googlesource.com/platform/system/extras),
+[`system/libbase`](https://android.googlesource.com/platform/system/libbase),
+[`system/core`](https://android.googlesource.com/platform/system/core),
+[`system/logging`](https://android.googlesource.com/platform/system/logging) and
+[`external/squashfs-tools`](https://android.googlesource.com/platform/external/squashfs-tools),
+all Apache License 2.0, and
+[`external/fec`](https://android.googlesource.com/platform/external/fec)
+(Phil Karn's Reed-Solomon library), LGPL 2.1 or later. It is
 not installed on a target.
